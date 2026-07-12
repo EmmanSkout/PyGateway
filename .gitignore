@@ -15,6 +15,7 @@ env/
 # Environment files
 .env
 .env.*
+!.env.example
 
 # VS Code
 .vscode/

@@ -10,7 +10,7 @@ A rate limiting service exposed as a REST API, backed by Redis, implementing mul
 ### Functional requirements
 1. Expose a REST endpoint: `POST /check`
    - Request body: `{"key": "user:123", "limit": 100, "window_seconds": 60}`
-   - Response: `{"allowed": true, "remaining": 42, "reset_at": <timestamp>}`
+   - Response: `{"allowed": true, "remaining": 42, "reset_at": <timestamp>}` DONE
 2. Implement **three algorithms**, selectable per request or per route:
    - Fixed window counter
    - Sliding window log (store timestamps, prune old ones)
