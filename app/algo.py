@@ -7,7 +7,7 @@ from app.config import get_settings
 
 @dataclass
 class BucketConf:
-    counter: int
+    counter: int | float
     timestamp: datetime
     
 @dataclass
@@ -20,11 +20,12 @@ class BucketPair:
 settings = get_settings()
 fixed_bucket: dict[str, BucketConf] = {}
 sliding_bucket: dict[str,BucketPair] = {}
+token_bucket : dict[str, BucketConf] = {}
 
 @dataclass
 class RateLimitResult:
     allowed: bool
-    remaining: int
+    remaining: int | float
     reset_at: datetime
 
 
@@ -99,14 +100,31 @@ def sliding_window(key: str) -> RateLimitResult:
             
         
 
-def token_bucket(key: str) -> RateLimitResult:
-    return RateLimitResult(True,0,datetime.now())
+def token_bucket_algo(key: str) -> RateLimitResult:
+    now = datetime.now()
+    bucket = token_bucket.get(key)
+    if bucket is None:
+        bucket = BucketConf(counter = settings.token_bucket_burst_capacity, timestamp= now)
+        token_bucket[key] = bucket
+    else:
+        elapsed = (now - bucket.timestamp).total_seconds()
+        tokens = min(settings.token_bucket_burst_capacity,(elapsed*settings.token_bucket_refill_rate/settings.token_bucket_refill_time) + bucket.counter)
+        bucket.counter = tokens
+        bucket.timestamp = now
+    
+    remaining_request = bucket.counter
+    allowed = (bucket.counter)>=1
+    if(allowed): bucket.counter-=1
+    reset_at = now + timedelta(seconds = (1-bucket.counter)/settings.token_bucket_refill_rate)
+    return RateLimitResult(allowed,remaining_request,reset_at)
+
     
 
 
 ALGO_REGISTRY: dict[str, AlgoHandler] = {
     "fixed_window": fixed_window,
     "sliding_window": sliding_window,
+    "token_bucket": token_bucket_algo
 }
 
 

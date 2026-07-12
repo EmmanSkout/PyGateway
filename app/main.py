@@ -17,7 +17,7 @@ class CheckGatewayRequest(BaseModel):
 
 class GatewayResponse(BaseModel):
     allowed: bool
-    remaining: int
+    remaining: int | float
     reset_at: datetime
 
 

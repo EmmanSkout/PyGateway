@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     fixed_window_limit: int = 5
     sliding_window_length: int = 10
     sliding_window_threshold: int = 10
+    token_bucket_refill_rate: float = 0.5
+    token_bucket_burst_capacity: int = 5
+    token_bucket_refill_time: int = 2
 
 
 @lru_cache()
