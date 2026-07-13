@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable
-
+from math import ceil, floor
+from typing import Awaitable, Callable
+from app.redis import get_redis_client
 from app.config import get_settings
 
 
@@ -29,10 +30,10 @@ class RateLimitResult:
     reset_at: datetime
 
 
-AlgoHandler = Callable[[str], RateLimitResult]
+AlgoHandler = Callable[[str], Awaitable[RateLimitResult]]
 
 
-def dispatch_algo(key: str, algo_name: str) -> RateLimitResult:
+async def dispatch_algo(key: str, algo_name: str) -> RateLimitResult:
     normalized_algo = algo_name.strip().lower()
     enabled_algos = {algo.strip().lower() for algo in settings.allowed_algos}
 
@@ -43,79 +44,91 @@ def dispatch_algo(key: str, algo_name: str) -> RateLimitResult:
     if handler is None:
         raise ValueError(f"Algorithm '{algo_name}' is enabled but not implemented")
 
-    return handler(key)
+    return await handler(key)
 
 
-def fixed_window(key: str) -> RateLimitResult:
+async def fixed_window(key: str) -> RateLimitResult:
     now = datetime.now()
-    bucket = fixed_bucket.get(key)
+    redis = get_redis_client()
+    redis_key = f"fixed-window:{key}"
+    counter = await redis.get(redis_key)
+    ttl = await redis.ttl(redis_key)
 
-    if bucket is None:
-        bucket = BucketConf(counter=1, timestamp=now)
-        fixed_bucket[key] = bucket
+    if counter is None:
+        await redis.set(redis_key, 1, ex=settings.fixed_window_length)
     else:
-        elapsed = (now - bucket.timestamp).total_seconds()
-        if elapsed >= settings.fixed_window_length:
-            bucket.counter = 1
-            bucket.timestamp = now
-        else:
-            bucket.counter += 1
-
-    allowed = bucket.counter <= settings.fixed_window_limit
-    remaining_requests = max(0, settings.fixed_window_limit - bucket.counter)
-    reset_at = bucket.timestamp + timedelta(seconds=settings.fixed_window_length)
+        counter = await redis.incr(redis_key)
+    allowed = (counter is None) or (int(counter) <= settings.fixed_window_limit)
+    remaining_requests = max(0, settings.fixed_window_limit - int(counter if counter is not None else 1))
+    reset_at = now + timedelta(seconds=ttl if ttl > 0 else settings.fixed_window_length)
 
     return RateLimitResult(allowed=allowed, remaining=remaining_requests, reset_at=reset_at)
 
 
-def sliding_window(key: str) -> RateLimitResult:
+async def sliding_window(key: str) -> RateLimitResult:
     now = datetime.now()
-    buckets = sliding_bucket.get(key)
-    elapsed: float = 0
-    if(buckets is None):
-        cur = BucketConf(counter=1, timestamp=now)
-        buckets = BucketPair(old_bucket=BucketConf(counter=0, timestamp=now), current_bucket=cur)
-        sliding_bucket[key] = buckets
-    else:
-        currentBucket = buckets.current_bucket
-        oldBucket = buckets.old_bucket
-        elapsed = (now - currentBucket.timestamp).total_seconds()
-        if elapsed >= settings.sliding_window_length:
-            oldBucket.counter = currentBucket.counter
-            oldBucket.timestamp = currentBucket.timestamp
-            currentBucket.counter = 1
-            currentBucket.timestamp = now
-            elapsed = 0
-        else:
-            currentBucket.counter += 1
+    redis = get_redis_client()
+    window_size = settings.sliding_window_length
+    current_window = floor(now.timestamp() / window_size)
+    old_window = current_window - 1
+    current_key = f"sliding-window:{key}:{current_window}"
+    old_key = f"sliding-window:{key}:{old_window}"
+    elapsed = (now.timestamp() % window_size) / window_size
+    reset_at = datetime.fromtimestamp((current_window + 1) * window_size)
+    
+    prev = await redis.get(old_key) or 0
+    cur = await redis.get(current_key) or 0
 
-    effective = buckets.current_bucket.counter + buckets.old_bucket.counter * (
-        1 - elapsed / settings.sliding_window_length
-    )
-    allowed = effective <= settings.sliding_window_threshold
-    remaining_requests = max(0, int(settings.sliding_window_threshold - effective))
-    reset_at = buckets.current_bucket.timestamp + timedelta(seconds=settings.sliding_window_length)
+    weighted_prev = (int(prev) if prev is not None else 0) * (1 - elapsed)
+    estimated = weighted_prev + (int(cur) if cur is not None else 0)
+    if(estimated>=settings.sliding_window_threshold):
+        allowed = False
+        remaining_requests = 0
+        return RateLimitResult(allowed=allowed,remaining=remaining_requests,reset_at=reset_at)
+    new_count = await redis.incr(current_key)
+    if(new_count==1):
+        await redis.expire(current_key, window_size * 2)
+    new_estimate = weighted_prev + new_count
+    remaining_requests = max(0,floor(settings.sliding_window_threshold-new_estimate))
+    allowed = True
     return RateLimitResult(allowed, remaining_requests, reset_at)
         
             
         
 
-def token_bucket_algo(key: str) -> RateLimitResult:
+async def token_bucket_algo(key: str) -> RateLimitResult:
     now = datetime.now()
-    bucket = token_bucket.get(key)
-    if bucket is None:
-        bucket = BucketConf(counter = settings.token_bucket_burst_capacity, timestamp= now)
-        token_bucket[key] = bucket
-    else:
-        elapsed = (now - bucket.timestamp).total_seconds()
-        tokens = min(settings.token_bucket_burst_capacity,(elapsed*settings.token_bucket_refill_rate/settings.token_bucket_refill_time) + bucket.counter)
-        bucket.counter = tokens
-        bucket.timestamp = now
+    redis = get_redis_client()
+    redis_key = f"token-bucket:{key}"
+    max_tokens = settings.token_bucket_burst_capacity
+    refill_rate = settings.token_bucket_refill_rate
+    tokens = max_tokens
+    last_refill = now
     
-    remaining_request = bucket.counter
-    allowed = (bucket.counter)>=1
-    if(allowed): bucket.counter-=1
-    reset_at = now + timedelta(seconds = (1-bucket.counter)/settings.token_bucket_refill_rate)
+    data = await redis.hgetall(redis_key)
+    if data:
+        tokens = float(data.get("tokens", max_tokens))
+        raw_last_refill = data.get("last_refill")
+        if raw_last_refill:
+            if isinstance(raw_last_refill, bytes):
+                raw_last_refill = raw_last_refill.decode()
+            elif isinstance(raw_last_refill, (bytearray, memoryview)):
+                raw_last_refill = bytes(raw_last_refill).decode()
+            last_refill = datetime.fromisoformat(raw_last_refill)
+    
+    elapsed = (now - last_refill).total_seconds()
+    new_tokens = elapsed*refill_rate
+    tokens = min(max_tokens,tokens+new_tokens)
+
+    allowed = False
+    remaining_request = tokens
+    
+    if(remaining_request>=1):
+        remaining_request-=1
+        allowed= True
+    await redis.hset(redis_key, mapping={"tokens" : str(remaining_request) , "last_refill": str(now.isoformat())} )
+    await redis.expire(redis_key,ceil(max_tokens/refill_rate)+1)
+    reset_at = now + timedelta(seconds=(max_tokens - remaining_request) / refill_rate)
     return RateLimitResult(allowed,remaining_request,reset_at)
 
     

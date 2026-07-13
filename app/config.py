@@ -16,8 +16,13 @@ class Settings(BaseSettings):
     token_bucket_refill_rate: float = 0.5
     token_bucket_burst_capacity: int = 5
     token_bucket_refill_time: int = 2
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    
+    
 
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
