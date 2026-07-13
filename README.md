@@ -1,36 +1,79 @@
 # PyGateway
 
-Starter FastAPI project scaffold.
+Simple FastAPI rate-limiter playground.
+
+## What It Does
+
+- Exposes a `/check` endpoint that evaluates a key with a selected algorithm.
+- Supports:
+  - `fixed_window`
+  - `sliding_window`
+  - `token_bucket`
 
 ## Quickstart
 
 1. Create and activate a virtual environment.
-2. Create your local env file:
-   - Copy `.env.example` to `.env`
-3. Install dependencies:
+2. Install dependencies:
    - `pip install -r requirements.txt`
    - `pip install -r requirements-dev.txt`
-4. Run the API:
+3. Start the API:
    - `uvicorn app.main:app --reload`
-5. Open docs:
+4. Open docs:
    - Swagger UI: http://127.0.0.1:8000/docs
-   - ReDoc: http://127.0.0.1:8000/redoc
+
+## API
+
+- `GET /health`
+  - Basic health check.
+- `GET /info`
+  - Shows app name/version/environment from settings.
+- `POST /check`
+  - Request body:
+    - `key` (string)
+    - `algo` (string)
+  - Returns:
+    - `allowed`
+    - `remaining`
+    - `reset_at`
+
+Example request:
+
+```json
+{
+  "key": "user-123",
+  "algo": "fixed_window"
+}
+```
 
 ## Configuration
 
-- Runtime settings are defined in `app/config.py`.
-- Values are loaded from environment variables and optional `.env`.
-- Use `.env.example` as the template for local development.
+Settings are defined in `app/config.py` and can be overridden via environment variables.
 
-Available settings:
+Core settings:
 
 - `APP_NAME`
 - `APP_VERSION`
 - `ENVIRONMENT`
+- `ALLOWED_ALGOS`
 
-You can check the active values at `GET /info`.
+Fixed window:
 
-## Run checks
+- `FIXED_WINDOW_LENGTH`
+- `FIXED_WINDOW_LIMIT`
 
-- Lint: `ruff check .`
+Sliding window:
+
+- `SLIDING_WINDOW_LENGTH`
+- `SLIDING_WINDOW_THRESHOLD`
+
+Token bucket:
+
+- `TOKEN_BUCKET_REFILL_RATE`
+- `TOKEN_BUCKET_BURST_CAPACITY`
+- `TOKEN_BUCKET_REFILL_TIME`
+
+## Dev Commands
+
+- Format: `python -m ruff format .`
+- Lint: `python -m ruff check .`
 - Tests: `pytest`
