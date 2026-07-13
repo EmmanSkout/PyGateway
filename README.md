@@ -77,3 +77,17 @@ Token bucket:
 - Format: `python -m ruff format .`
 - Lint: `python -m ruff check .`
 - Tests: `pytest`
+
+## Auto-Lint On Commit
+
+To run Ruff auto-fixes and include those fixes in the same commit:
+
+1. Enable repository hooks once:
+  - `git config core.hooksPath .githooks`
+2. Commit as normal.
+
+The pre-commit hook will:
+
+- run `ruff check . --fix`
+- stage tracked file changes from Ruff (`git add -u`)
+- run `ruff check .` and block the commit only if lint still fails
