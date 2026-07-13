@@ -170,7 +170,12 @@ resource "aws_instance" "app" {
     set -euxo pipefail
 
     dnf update -y
-    dnf install -y docker git curl
+    dnf install -y docker git
+
+    if ! command -v curl >/dev/null 2>&1; then
+      dnf install -y curl-minimal
+    fi
+
     systemctl enable --now docker
     usermod -aG docker ec2-user
 
