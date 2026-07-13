@@ -50,7 +50,7 @@ async def check_testing(request: CheckGatewayRequest) -> GatewayResponse:
     )
 
 
-@app.get("/redis-test", tags=["testing"])
+@app.get("/redis-health", tags=["testing"])
 async def redis_test() -> dict[str, str]:
     client = get_redis_client()
     try:
