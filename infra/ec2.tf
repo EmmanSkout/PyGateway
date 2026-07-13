@@ -170,9 +170,28 @@ resource "aws_instance" "app" {
     set -euxo pipefail
 
     dnf update -y
-    dnf install -y docker docker-compose-plugin git
+    dnf install -y docker git curl
     systemctl enable --now docker
     usermod -aG docker ec2-user
+
+    if ! docker compose version >/dev/null 2>&1; then
+      dnf install -y docker-compose-plugin || true
+    fi
+
+    if ! docker compose version >/dev/null 2>&1; then
+      mkdir -p /usr/local/libexec/docker/cli-plugins
+      ARCH="$(uname -m)"
+      if [ "$ARCH" = "x86_64" ]; then
+        COMPOSE_ARCH="x86_64"
+      elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+        COMPOSE_ARCH="aarch64"
+      else
+        COMPOSE_ARCH="x86_64"
+      fi
+
+      curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-${COMPOSE_ARCH}" -o /usr/local/libexec/docker/cli-plugins/docker-compose
+      chmod +x /usr/local/libexec/docker/cli-plugins/docker-compose
+    fi
 
     cd /home/ec2-user
     if [ ! -d "${var.app_dir}" ]; then
