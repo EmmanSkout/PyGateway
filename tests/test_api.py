@@ -1,5 +1,5 @@
-from datetime import datetime
 from collections.abc import Generator
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient

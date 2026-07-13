@@ -13,9 +13,8 @@ async def close_redis_client(client: redis.Redis) -> None:
         client (redis.Redis): The Redis client instance to close.
     """
     await client.aclose()
-    
-    
-    
+
+
 @lru_cache()
 def get_redis_client() -> redis.Redis:
     """

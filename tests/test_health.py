@@ -9,8 +9,8 @@ def test_health_check() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
-    
-    
+
+
 def test_redis_health() -> None:
     class HealthyRedisClient:
         async def ping(self) -> bool:
@@ -39,6 +39,3 @@ def test_redis_health_negative() -> None:
     response = client.get("/redis-health")
     assert response.status_code == 500
     assert "Redis connection error" in response.json()["detail"]
-    
-    
-    
