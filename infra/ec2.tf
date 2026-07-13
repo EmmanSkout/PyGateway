@@ -166,55 +166,79 @@ resource "aws_instance" "app" {
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
   user_data = <<-EOT
-    #!/bin/bash
-    set -euxo pipefail
+#!/bin/bash
+set -euxo pipefail
 
-    dnf update -y
-    dnf install -y docker git
-
-    if ! command -v curl >/dev/null 2>&1; then
-      dnf install -y curl-minimal
+retry() {
+  local retries=10
+  local wait_seconds=6
+  local attempt=1
+  until "$@"; do
+    if [ "$attempt" -ge "$retries" ]; then
+      echo "Command failed after $${retries} attempts: $*"
+      return 1
     fi
+    echo "Attempt $${attempt}/$${retries} failed. Retrying in $${wait_seconds}s: $*"
+    sleep "$wait_seconds"
+    attempt=$((attempt + 1))
+  done
+}
 
-    systemctl enable --now docker
-    usermod -aG docker ec2-user
+retry dnf update -y
+retry dnf install -y docker git
 
-    if ! docker compose version >/dev/null 2>&1; then
-      dnf install -y docker-compose-plugin || true
-    fi
+if ! command -v curl >/dev/null 2>&1; then
+  retry dnf install -y curl-minimal
+fi
 
-    if ! docker compose version >/dev/null 2>&1; then
-      mkdir -p /usr/local/libexec/docker/cli-plugins
-      ARCH="$(uname -m)"
-      if [ "$ARCH" = "x86_64" ]; then
-        COMPOSE_ARCH="x86_64"
-      elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-        COMPOSE_ARCH="aarch64"
-      else
-        COMPOSE_ARCH="x86_64"
-      fi
+systemctl enable --now docker
+usermod -aG docker ec2-user
 
-      curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-$${COMPOSE_ARCH}" -o /usr/local/libexec/docker/cli-plugins/docker-compose
-      chmod +x /usr/local/libexec/docker/cli-plugins/docker-compose
-    fi
+for i in $(seq 1 20); do
+  if docker info >/dev/null 2>&1; then
+    break
+  fi
+  sleep 3
+done
 
-    cd /home/ec2-user
-    if [ ! -d "${var.app_dir}" ]; then
-      sudo -u ec2-user git clone ${var.repo_url} ${var.app_dir}
-    fi
+docker info >/dev/null 2>&1
 
-    cd /home/ec2-user/${var.app_dir}
+if ! docker compose version >/dev/null 2>&1; then
+  retry dnf install -y docker-compose-plugin || true
+fi
 
-    cat > /home/ec2-user/${var.app_dir}/.env <<EOF
+if ! docker compose version >/dev/null 2>&1; then
+  mkdir -p /usr/local/libexec/docker/cli-plugins
+  ARCH="$(uname -m)"
+  if [ "$ARCH" = "x86_64" ]; then
+    COMPOSE_ARCH="x86_64"
+  elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    COMPOSE_ARCH="aarch64"
+  else
+    COMPOSE_ARCH="x86_64"
+  fi
+
+  retry curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-$${COMPOSE_ARCH}" -o /usr/local/libexec/docker/cli-plugins/docker-compose
+  chmod +x /usr/local/libexec/docker/cli-plugins/docker-compose
+fi
+
+cd /home/ec2-user
+if [ ! -d "${var.app_dir}" ]; then
+  retry sudo -u ec2-user git clone ${var.repo_url} ${var.app_dir}
+fi
+
+cd /home/ec2-user/${var.app_dir}
+
+cat > /home/ec2-user/${var.app_dir}/.env <<EOF
 ALLOWED_ALGOS=${var.allowed_algos}
 FIXED_WINDOW_LENGTH=${var.fixed_window_length}
 REDIS_HOST=${var.redis_host}
 REDIS_PORT=${var.redis_port}
 EOF
 
-    chown ec2-user:ec2-user /home/ec2-user/${var.app_dir}/.env
+chown ec2-user:ec2-user /home/ec2-user/${var.app_dir}/.env
 
-    sudo -u ec2-user docker compose up -d --build
+retry docker compose up -d --build
   EOT
 
   tags = {
