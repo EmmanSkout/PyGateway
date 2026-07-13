@@ -98,6 +98,32 @@ data "aws_ami" "al2023" {
   }
 }
 
+data "aws_iam_policy_document" "ec2_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ec2_ssm" {
+  name               = "pygateway-ec2-ssm-role"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "ec2_ssm_core" {
+  role       = aws_iam_role.ec2_ssm.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "ec2" {
+  name = "pygateway-ec2-instance-profile"
+  role = aws_iam_role.ec2_ssm.name
+}
+
 resource "aws_security_group" "app" {
   name        = "pygateway-ec2-sg"
   description = "Allow SSH and HTTP for PyGateway"
@@ -137,6 +163,7 @@ resource "aws_instance" "app" {
   subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.app.id]
   key_name               = var.key_name
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
   user_data = <<-EOT
     #!/bin/bash
